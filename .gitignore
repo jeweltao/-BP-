@@ -1,0 +1,529 @@
+#include<iostream>
+#include<cmath>
+#include<ctime>
+#include<cstdlib>
+#include<cstdio>
+#include<fstream>
+using namespace std;
+#define  innode 15  //输入结点数
+#define  hidenode 10 //隐含结点数
+#define  outnode 3  //输出结点数
+#define  trainsample 1800 //BP训练样本数
+#define  testsample 1000 //BP测试样本数
+class BpNet
+{
+public:
+    void train(double p[trainsample][innode ],double t[trainsample][outnode]);//Bp训练
+    double p[trainsample][innode];     //输入的样本
+    double t[trainsample][outnode];    //样本要输出的
+    double *recognize(double *p);//Bp识别
+	void writetrain(); //写训练完的权值  
+    void readtrain(); //读训练好的权值，这使的不用每次去训练了，只要把训练最好的权值存下来就OK 
+    BpNet();
+    virtual ~BpNet();
+public:
+    void init();
+    double w[innode][hidenode];//隐含结点权值
+    double w1[hidenode][outnode];//输出结点权值
+    double b1[hidenode];//隐含结点阈值
+    double b2[outnode];//输出结点阈值
+    double rate_w; //权值学习率（输入层-隐含层)
+    double rate_w1;//权值学习率 (隐含层-输出层)
+    double rate_b1;//隐含层阈值学习率
+    double rate_b2;//输出层阈值学习率
+    double e;//误差计算
+    double error;//允许的最大误差
+    double result[outnode];// Bp输出
+};
+
+BpNet::BpNet()
+{
+    error=1.0;
+    e=0.0;
+    rate_w=0.7;  //权值学习率（输入层--隐含层)
+    rate_w1=0.7; //权值学习率 (隐含层--输出层)
+    rate_b1=0.7; //隐含层阀值学习率
+    rate_b2=0.7; //输出层阀值学习率
+}
+BpNet::~BpNet()
+{
+}
+void winit(double w[],int n) //权值初始化
+{
+  for(int i=0;i<n;i++)
+    w[i]=(2.0*(double)rand()/RAND_MAX)-1;
+}
+void BpNet::init()
+{
+	srand(time(0));
+    winit((double*)w,innode*hidenode);
+    winit((double*)w1,hidenode*outnode);
+    winit(b1,hidenode);
+    winit(b2,outnode);
+}
+void BpNet::train(double p[trainsample][innode],double t[trainsample][outnode])
+{
+    double pp[hidenode];//隐含结点的校正误差
+    double qq[outnode];//希望输出值与实际输出值的偏差
+    double yd[outnode];//希望输出值
+    double x[innode]; //输入向量
+    double x1[hidenode];//隐含结点状态值
+    double x2[outnode];//输出结点状态值
+    double o1[hidenode];//隐含层激活值
+    double o2[outnode];//输出层激活值
+    for(int isamp=0;isamp<trainsample;isamp++)//循环训练一次样品
+    {
+        for(int i=0;i<innode;i++)
+            x[i]=p[isamp][i]; //输入的样本
+        for( i=0;i<outnode;i++)
+            yd[i]=t[isamp][i]; //期望输出的样本
+        //构造每个样品的输入和输出标准
+        for(int j=0;j<hidenode;j++)
+        {
+            o1[j]=0.0;
+            for(int i=0;i<innode;i++)
+                o1[j]=o1[j]+w[i][j]*x[i];//隐含层各单元输入激活值
+            x1[j]=1.0/(1+exp(-o1[j]-b1[j]));//隐含层各单元的输出
+            //    if(o1[j]+b1[j]>0) x1[j]=1;
+            //else x1[j]=0;
+        }
+        for(int k=0;k<outnode;k++)
+        {
+            o2[k]=0.0;
+            for(int j=0;j<hidenode;j++)
+            o2[k]=o2[k]+w1[j][k]*x1[j]; //输出层各单元输入激活值
+            x2[k]=1.0/(1.0+exp(-o2[k]-b2[k])); //输出层各单元输出
+            //    if(o2[k]+b2[k]>0) x2[k]=1;
+            //    else x2[k]=0;
+        }
+        for( k=0;k<outnode;k++)
+        {
+            qq[k]=(yd[k]-x2[k])*x2[k]*(1-x2[k]); //希望输出与实际输出的偏差
+            for(int j=0;j<hidenode;j++)
+                w1[j][k]+=rate_w1*qq[k]*x1[j];  //下一次的隐含层和输出层之间的新连接权
+        }
+        for( j=0;j<hidenode;j++)
+        {
+            pp[j]=0.0;
+            for(int k=0;k<outnode;k++)
+                pp[j]=pp[j]+qq[k]*w1[j][k];
+            pp[j]=pp[j]*x1[j]*(1-x1[j]); //隐含层的校正误差
+
+            for(int i=0;i<innode;i++)
+                w[i][j]+=rate_w*pp[j]*x[i]; //下一次的输入层和隐含层之间的新连接权
+        }
+        for( k=0;k<outnode;k++)
+        {
+            e+=fabs(yd[k]-x2[k])*fabs(yd[k]-x2[k]); //计算均方差
+        }
+        error=e/2.0;
+        for( k=0;k<outnode;k++)
+            b2[k]=b2[k]+rate_b2*qq[k]; //下一次的隐含层和输出层之间的新阈值
+        for( j=0;j<hidenode;j++)
+            b1[j]=b1[j]+rate_b1*pp[j]; //下一次的输入层和隐含层之间的新阈值
+    }
+}
+double *BpNet::recognize(double *p)
+{
+    double x[innode]; //输入向量
+    double x1[hidenode]; //隐含结点状态值
+    double x2[outnode]; //输出结点状态值
+    double o1[hidenode]; //隐含层激活值
+    double o2[outnode]; //输出层激活值
+    for(int i=0;i<innode;i++)
+        x[i]=p[i];
+    for(int j=0;j<hidenode;j++)
+    {
+        o1[j]=0.0;
+        for(int i=0;i<innode;i++)
+        o1[j]=o1[j]+w[i][j]*x[i]; //隐含层各单元激活值
+        x1[j]=1.0/(1.0+exp(-o1[j]-b1[j])); //隐含层各单元输出
+        //if(o1[j]+b1[j]>0) x1[j]=1;
+        //    else x1[j]=0;
+    }
+    for(int k=0;k<outnode;k++)
+    {
+        o2[k]=0.0;
+        for(int j=0;j<hidenode;j++)
+        o2[k]=o2[k]+w1[j][k]*x1[j];//输出层各单元激活值
+        x2[k]=1.0/(1.0+exp(-o2[k]-b2[k]));//输出层各单元输出
+        //if(o2[k]+b2[k]>0) x2[k]=1;
+        //else x2[k]=0;
+    }
+    for( k=0;k<outnode;k++)
+    {
+        result[k]=x2[k];
+    }
+    return result;
+}
+void BpNet::writetrain()  
+{  
+    FILE *stream0;  
+    FILE *stream1;  
+    FILE *stream2;  
+    FILE *stream3;  
+    int i,j;  
+    //隐含结点权值写入  
+    if(( stream0 = fopen("w.txt", "w+" ))==NULL)  
+    {  
+        cout<<"创建文件失败!";  
+        exit(1);  
+    }  
+    for(i=0;i<innode;i++)  
+    {  
+        for(j=0;j<hidenode;j++)  
+        {  
+            fprintf(stream0, "%f\n", w[i][j]);  
+        }  
+    }  
+    fclose(stream0);    
+    //输出结点权值写入  
+    if(( stream1 = fopen("w1.txt", "w+" ))==NULL)  
+    {  
+        cout<<"创建文件失败!";  
+        exit(1);  
+    }  
+    for(i=0;i<hidenode;i++)  
+    {  
+        for(j=0;j<outnode;j++)  
+        {  
+            fprintf(stream1, "%f\n",w1[i][j]);  
+        }  
+    }  
+    fclose(stream1);   
+    //隐含结点阀值写入  
+    if(( stream2 = fopen("b1.txt", "w+" ))==NULL)  
+    {  
+        cout<<"创建文件失败!";  
+        exit(1);  
+    }  
+    for(i=0;i<hidenode;i++)  
+        fprintf(stream2, "%f\n",b1[i]);  
+    fclose(stream2);   
+    //输出结点阀值写入  
+    if(( stream3 = fopen("b2.txt", "w+" ))==NULL)  
+    {  
+        cout<<"创建文件失败!";  
+        exit(1);  
+    }  
+    for(i=0;i<outnode;i++)  
+        fprintf(stream3, "%f\n",b2[i]);  
+    fclose(stream3);  
+  
+}    
+void BpNet::readtrain()  
+{  
+    FILE *stream0;  
+    FILE *stream1;  
+    FILE *stream2;  
+    FILE *stream3;  
+    int i,j;   
+    //隐含结点权值读出  
+    if(( stream0 = fopen("w.txt", "r" ))==NULL)  
+    {  
+        cout<<"打开文件失败!";  
+        exit(1);  
+    }  
+    float  wx[innode][hidenode];  
+    for(i=0;i<innode;i++)  
+    {  
+        for(j=0;j<hidenode;j++)  
+        {  
+            fscanf(stream0, "%f", &wx[i][j]);  
+            w[i][j]=wx[i][j];  
+        }  
+    }  
+    fclose(stream0);  
+  
+    //输出结点权值读出  
+    if(( stream1 = fopen("w1.txt", "r" ))==NULL)  
+    {  
+        cout<<"打开文件失败!";  
+        exit(1);  
+    }  
+    float  wx1[hidenode][outnode];  
+    for(i=0;i<hidenode;i++)  
+    {  
+        for(j=0;j<outnode;j++)  
+        {  
+            fscanf(stream1, "%f", &wx1[i][j]);  
+            w1[i][j]=wx1[i][j];  
+        }  
+    }  
+    fclose(stream1);    
+    //隐含结点阀值读出  
+    if(( stream2 = fopen("b1.txt", "r" ))==NULL)  
+    {  
+        cout<<"打开文件失败!";  
+        exit(1);  
+    }  
+    float xb1[hidenode];  
+    for(i=0;i<hidenode;i++)  
+    {  
+        fscanf(stream2, "%f",&xb1[i]);  
+        b1[i]=xb1[i];  
+    }  
+    fclose(stream2);  
+  
+    //输出结点阀值读出  
+    if(( stream3 = fopen("b2.txt", "r" ))==NULL)  
+    {  
+        cout<<"打开文件失败!";  
+        exit(1);  
+    }  
+    float xb2[outnode];  
+    for(i=0;i<outnode;i++)  
+    {  
+        fscanf(stream3, "%f",&xb2[i]);  
+        b2[i]=xb2[i];  
+    }  
+    fclose(stream3);  
+}
+void data_to_X(double X[][15] )
+{
+	ifstream f1;
+	f1.open("D:\\read file\\3win.txt");
+	int g=0;
+	while(!f1.eof()&&(g<trainsample))
+	{
+		double  a[15]={0};
+		double c1=0;double c2=0;
+		char buffer0[50]="\0";
+		f1.getline(buffer0,50,'\n');
+		a[0]=buffer0[0]-48;a[1]=buffer0[1]-48;a[2]=buffer0[2]-48;a[3]=buffer0[3]-48;a[4]=buffer0[4]-48;
+		a[5]=buffer0[6]-48;a[6]=buffer0[7]-48;a[7]=buffer0[8]-48;a[8]=buffer0[9]-48;a[9]=buffer0[10]-48;
+		a[10]=buffer0[12]-48;a[11]=buffer0[13]-48;a[12]=buffer0[14]-48;a[13]=buffer0[15]-48;a[14]=buffer0[16]-48;
+		for(int v1=0;v1<15;v1++)
+		{
+			X[g][v1]=a[v1];
+		}
+		cout<<endl;
+        g++;
+	}
+	f1.close();
+
+}
+void data_to_Y(double Y[][3])
+{
+	ifstream f_Y;
+	f_Y.open("D:\\read file\\ss.txt");
+	int g=0;
+	while(!f_Y.eof()&&(g<trainsample))
+	{
+		char buffer01[50]="";
+		double a1[3]={0};
+		f_Y.getline(buffer01,50,'\n');
+		a1[0]=buffer01[0]-48;a1[1]=buffer01[2]-48;a1[2]=buffer01[4]-48;
+		for(int v11=0;v11<3;v11++)
+		{
+			Y[g][v11]=a1[v11];
+		}
+		cout<<endl;
+		g++;
+	}
+	f_Y.close();
+}
+void data_to_X1(double X[][15] )
+{
+	ifstream f1;
+	f1.open("D:\\read file\\3win.txt");
+	int g=0;
+	while(!f1.eof()&&(g<testsample))
+	{
+		double  a[15]={0};
+		double c1=0;double c2=0;
+		char buffer0[50]="\0";
+		f1.getline(buffer0,50,'\n');
+		a[0]=buffer0[0]-48;a[1]=buffer0[1]-48;a[2]=buffer0[2]-48;a[3]=buffer0[3]-48;a[4]=buffer0[4]-48;
+		a[5]=buffer0[6]-48;a[6]=buffer0[7]-48;a[7]=buffer0[8]-48;a[8]=buffer0[9]-48;a[9]=buffer0[10]-48;
+		a[10]=buffer0[12]-48;a[11]=buffer0[13]-48;a[12]=buffer0[14]-48;a[13]=buffer0[15]-48;a[14]=buffer0[16]-48;
+		for(int v1=0;v1<15;v1++)
+		{
+			X[g][v1]=a[v1];
+		}
+		cout<<endl;
+        g++;
+	}
+	f1.close();
+
+}
+void data_to_Y1(double Y[][3])
+{
+	ifstream f_Y;
+	f_Y.open("D:\\read file\\ss.txt");
+	int g=0;
+	while(!f_Y.eof()&&(g<testsample))
+	{
+		char buffer01[50]="";
+		double a1[3]={0};
+		f_Y.getline(buffer01,50,'\n');
+		a1[0]=buffer01[0]-48;a1[1]=buffer01[2]-48;a1[2]=buffer01[4]-48;
+		for(int v11=0;v11<3;v11++)
+		{
+			Y[g][v11]=a1[v11];
+		}
+		cout<<endl;
+		g++;
+	}
+	f_Y.close();
+}
+//测试部分
+int bpnn_test()
+{
+   int H=0,E=0,C=0,H_test=0,E_test=0,C_test=0,count=0;
+   float R1,R2,R3,R;
+   FILE *f3;
+   double *r;
+   double m[innode]={0};
+   double JG_test[testsample][outnode]={0};
+   double X[testsample][innode];
+   data_to_X1(X);
+   double Y[testsample][outnode];
+   data_to_Y1(Y);
+   BpNet bp;
+   bp.init();
+   bp.writetrain();
+   bp.readtrain();
+   for(int v1=0;v1<testsample;v1++)
+	{
+		for(int v2=0;v2<15;v2++)
+		{
+			m[v2]=X[v1][v2];
+		}
+	r=bp.recognize(m);//测试样本时采用胜者为王方法变成 类似(0 0 1),之后 和 真实的二级结构进行比较；
+		for(int v3=0;v3<outnode;v3++,r++)
+		{
+			cout<<*r<<" ";
+		}
+		  
+		  cout<<endl;
+   for(int v1=0;v1<testsample;v1++)
+	{
+		for(int v2=0;v2<15;v2++)
+		{
+			m[v2]=X[v1][v2];
+		}
+		r=bp.recognize(m);//测试样本时采用胜者为王方法变成 类似(0 0 1),之后 和 真实的二级结构进行比较，
+		//若相同count++,最终输出值是count/测试样本的个数
+        //将测试的结果保存到JG_TXT中
+		for(int v3=0;v3<outnode;v3++,r++)
+		{
+			JG_test[v1][v3]=*r;
+		}
+    }
+   if((f3=fopen("JG_test.txt","w+"))==NULL)
+	{
+		cout<<"创建文件失败!";
+		exit(1);
+	}
+	for(int z1=0;z1<testsample;z1++)
+	{
+		for(int z2=0;z2<outnode;z2++)
+		{
+			fprintf(f3,"%f\t",JG_test[z1][z2]);
+		}
+		fprintf(f3,"\n");
+	}
+	fclose(f3);
+   }
+//将JG_test数组根据胜者为王方法变成类似(0 0 1)；
+for(int j=0;j<testsample;j++)
+{
+     if ((JG_test[j][1]>JG_test[j][0])&&(JG_test[j][1]>JG_test[j][2]))	
+	 {JG_test[j][0]=0;JG_test[j][1]=1;JG_test[j][2]=0;}
+	   else
+	   { 
+		   	if ((JG_test[j][0]>JG_test[j][1])&&(JG_test[j][0]>JG_test[j][2]))   
+		   {JG_test[j][0]=1;JG_test[j][1]=0;JG_test[j][2]=0;}
+		   else
+		   {
+			   if((JG_test[j][2]>JG_test[j][1])&&(JG_test[j][2]>JG_test[j][0]))
+			   {JG_test[j][0]=0;JG_test[j][1]=0;JG_test[j][2]=1;}
+		   }
+	   }
+		   
+}
+//比较JG_test和Y两个数组，若相同count++,最终输出值是count/测试样本的个数。
+
+for(int j1=0;j1<testsample;j1++)
+{	
+	if((JG_test[j1][0]==1)&&(JG_test[j1][1]==0)&&(JG_test[j1][2]==0))
+			H_test++;
+		    else
+			{
+			if((JG_test[j1][0]==0)&&(JG_test[j1][1]==1)&&(JG_test[j1][2]==0))
+			E_test++;
+			else
+			{
+			if((JG_test[j1][0]==0)&&(JG_test[j1][1]==0)&&(JG_test[j1][2]==1))
+			C_test++;
+			}
+			}
+}
+for(int j2=0;j2<testsample;j2++)
+{	
+	if((Y[j2][0]==1)&&(Y[j2][1]==0)&&(Y[j2][2]==0))
+			H++;
+			else
+			{
+			if((Y[j2][0]==0)&&(Y[j2][1]==1)&&(Y[j2][2]==0))
+			E++;
+			else
+			{
+			if((Y[j2][0]==0)&&(Y[j2][1]==0)&&(Y[j2][2]==1))
+			C++;
+			}
+			}
+}
+
+for(int j3=0;j3<testsample;j3++)
+{
+	if((JG_test[j3][0]==Y[j3][0])&&(JG_test[j3][1]==Y[j3][1])&&(JG_test[j3][2]==Y[j3][2]))
+	{
+		count++;
+	}
+}
+R=(float)count/testsample;
+R1=(float)H_test/H;
+R2=(float)E_test/E;
+R3=(float)C_test/C;
+cout<<" "<<endl;
+cout<<"测试螺旋数:"<<H_test<<endl;
+cout<<"真实螺旋数:"<<H<<endl;
+cout<<"螺旋比例:"<<R1<<endl;
+cout<<" "<<endl;
+cout<<"测试折叠数:"<<E_test<<endl;
+cout<<"真实折叠数:"<<E<<endl;
+cout<<"折叠比例:"<<R2<<endl;
+cout<<" "<<endl;
+cout<<"测试无规则数:"<<C_test<<endl;
+cout<<"真实无规则数:"<<C<<endl;
+cout<<"无规则比例:"<<R3<<endl;
+cout<<" "<<endl;
+cout<<"BP神经网络的预测正确率:"<<R<<endl;
+return 0;
+}
+
+int main()
+{
+   double X[trainsample][innode];
+   data_to_X(X);
+   double Y[trainsample][outnode];
+   data_to_Y(Y);
+   BpNet bp;
+   bp.init();
+   int times=0;
+   while(times<500)
+    {	
+        bp.e=0.0;
+        times++;
+        bp.train(X,Y);
+        cout<<"Times="<<times<<" error="<<bp.error<<endl;
+	
+    }
+    cout<<"...trainning complete..."<<endl;
+	//cin.get();
+   bpnn_test();
+   cin.get();
+   return 0;
+}
